@@ -24,7 +24,7 @@ Each was chosen against a named rejected alternative.
 
 ## 1.4 Design architectures suitable for large-scale systems, ensuring security and robustness
 
-Caching is an inner decorator, so it can become distributed without touching governance; the registry centralises lifecycle state. Robustness is demonstrated: a provider outage yields three attempts, an explicit `[degraded: primary unavailable]` rationale and a decision still reaching the audit trail; an illegal promotion is refused.
+Caching is an inner decorator, so it can become distributed without touching governance; the registry centralises lifecycle state. Robustness is demonstrated: a provider outage still produces a decision that reaches the audit trail, and a promotion that breaks the lifecycle rules is refused.
 
 ## 1.5 Develop software adaptable for AI models and efficient for data science tasks
 
@@ -32,7 +32,7 @@ The AI layer is reached only through `ScoringBackend`, so swapping a hosted LLM 
 
 ## 1.6 Link to practical work
 
-Secure coding appears in `validation.py`; the four patterns in one engine (Task 2); robustness in `build_risk_service`; AI adaptability in the registry and feature store, where run section 7 changes the live version without code change. Unit 6 supplies the concurrency foundation: `FeatureStore` takes a re-entrant lock because `compute_vector` calls `get` internally, where a plain `Lock` self-deadlocks.
+Secure coding appears in `validation.py`; the four patterns in one engine (Task 2); AI adaptability in the registry and feature store, where run section 7 changes the live version without code change. Unit 6 supplies the concurrency foundation: `FeatureStore` takes a re-entrant lock because `compute_vector` calls `get` internally, where a plain `Lock` self-deadlocks.
 
 # Task 2 – Showcase Artefacts
 
@@ -40,15 +40,47 @@ Repository: `https://github.com/stacyalwangaessex/aoodp-capstone` (GitHub Pages)
 
 ## 2.1 Artefact A — Thread-safe concurrency (Unit 6)
 
-`bank_account.py` and `transaction_simulator.py`, 39 tests: encapsulated state under a re-entrant lock, custom exception types, and a transfer service that cannot deadlock when a guarded method calls another.
+`bank_account.py` and `transaction_simulator.py`, 39 tests: encapsulated state under a re-entrant lock, custom exception types, and a transfer service that cannot deadlock under nested locking.
 
 ## 2.2 Artefact B — Strategy pattern
 
-`RiskScoringStrategy` defines `score(features, model_ref)`, implemented rule-based, statistical and model-backed through `ScoringBackend`, so one engine runs an explainable rule set or a learned model; `contributions` records which inputs drove the number.
+`RiskScoringStrategy` defines `score(features, model_ref)`, implemented rule-based, statistical and model-backed through `ScoringBackend`; `contributions` records which inputs drove the number.
+
+@caption Listing 1 — the port the whole AI path depends on (`capstone/strategies.py`, abridged)
+
+```python
+@runtime_checkable
+class ScoringBackend(Protocol):
+    def predict(
+        self, features: Mapping[str, float], model_ref: str
+    ) -> Mapping[str, Any]:
+        """Return a raw prediction payload for *features*."""
+        ...  # pragma: no cover - protocol declaration
+```
 
 ## 2.3 Artefact C — Decorator pattern
 
 Five layers — redaction, metrics, audit, caching, fallback — are composed by `compose_scoring_pipeline()`, the single assembly point. **Defect fixed:** assembly placed `AuditingDecorator` inside `FallbackDecorator`; every per-decorator test passed, and only a test that a degraded decision reaches the audit sink exposed it.
+
+@caption Listing 2 — the ordering decision made explicit (`capstone/decorators.py`, abridged; indentation normalised)
+
+```python
+core: ScoringComponent = StrategyComponent(strategy, policy=policy)
+
+if cache_entries:
+    core = CachingDecorator(core, max_entries=cache_entries)
+if fallback_strategy is not None:
+    core = FallbackDecorator(
+        core, StrategyComponent(fallback_strategy, policy=policy)
+    )
+# Auditing wraps the fallback, not the other way round: a degraded
+# decision must reach the audit trail rather than die inside the layer
+# that produced it.
+core = AuditingDecorator(core, sink=audit_sink)
+core = MetricsDecorator(core, clock=clock)
+core = RedactingDecorator(core, extra_sensitive_keys=extra_sensitive_keys)
+return core
+```
 
 ## 2.4 Artefact D — Visitor pattern
 
@@ -70,6 +102,24 @@ Five layers — redaction, metrics, audit, caching, fallback — are composed by
 
 `capstone/tests/` holds nine modules and 355 offline tests at 99% coverage of 2,512 statements, with doubles named by category (Python Software Foundation, 2026). An AI assistant drafted tests from class contracts, finding a boundary case I had missed — a boolean score, an `int` in Python, that passes `isinstance` — but also produced confidently wrong assertions, detectable only by running them.
 
+@caption Listing 3 — a spy double that makes one call reviewable (`capstone/tests/conftest.py`, abridged)
+
+```python
+class CallRecorder:
+    """A spy that records every call it receives."""
+
+    def __init__(self) -> None:
+        self.calls: list[Any] = []
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        self.calls.append((args, kwargs))
+        return None
+
+    @property
+    def count(self) -> int:
+        return len(self.calls)
+```
+
 ## 2.9 Capstone — architecture and robustness
 
 Figure 1 shows the composition root, the defended decorator order, the strategy/backend seam, adapters and visitor. `evidence/demo_run_output.txt` captures eight sections: a six-transaction batch (two `allow`, three `review`, one `block`); audit records with no identifier; masking before egress (`GB33…5555` → `****…5555`); and a provider outage with a three-attempt retry budget.
@@ -82,7 +132,7 @@ An e-Portfolio is a curated, purposeful collection of evidence rather than a chr
 
 ## 3.1 Academic skills
 
-**Critical thinking.** The formative experience was the composition-order defect. My first reaction was to distrust the test; the correct reaction was to distrust the design. I now ask what a passing test *cannot* see before asking whether it should pass, and applied to the registry defect that question produced my working rule about observing state through a second access path.
+**Critical thinking.** The formative experience was the composition-order defect. My first reaction was to distrust the test; the correct reaction was to distrust the design. I now ask what a passing test *cannot* see before asking whether it should pass, and applied to the registry defect that question produced my working rule about observing state through a second access path. That reframing — from "does this pass?" to "what does passing leave unexamined?" — is the transferable analytical habit, and it is what turned two green suites into evidence that the design, not the test, was wrong.
 
 **Ethical considerations in AI-driven OO design.** *Bias propagation:* policy lives in data rather than a class hierarchy, so rule weights and thresholds are inspectable, versionable values a reviewer can read directly. The residual risk is real: those weights are expert-set, not learned, so they encode the blind spots of their authors — the engine makes bias inspectable, not absent (Barocas, Hardt and Narayanan, 2023). *Transparency:* `rationale` and `contributions` are contract fields, so an algorithm that cannot say which inputs drove its number cannot conform. *Black-box coupling:* `ScoringBackend` is five lines with no vendor concepts. *Auditability:* every decision produces a structured record — component, model version, score, decision, rationale — asserted by the run to contain no account or customer identifier.
 
@@ -92,7 +142,7 @@ An e-Portfolio is a curated, purposeful collection of evidence rather than a chr
 
 ## 3.2 Employability skills
 
-**Time management.** I worked in artefact-sized increments, capturing evidence alongside construction rather than reconstructing it at the end. My concrete failure was underestimating test-writing: closing coverage from 87% to 99% took three modules and 143 tests and produced the two most valuable findings in the portfolio, which argues for budgeting test time as design time.
+**Time management.** I worked in artefact-sized increments, capturing evidence alongside construction rather than reconstructing it at the end. My concrete failure was underestimating test-writing: closing coverage from 87% to 99% took three modules and 143 tests and produced the two most valuable findings in the portfolio, which argues for budgeting test time as design time. The same lesson held for this portfolio: the narrative was rewritten three times as the evidence arrived, which cost more effort than capturing it correctly while the work was fresh.
 
 **Communication and literacy.** The clearest gain was writing docstrings that carry a decision rather than a description: `compose_scoring_pipeline` states the order and justifies each position. Writing the degradation marker as a machine-readable prefix (`[degraded: primary unavailable]`) was also a communication decision, since the same form is legible to an operator, a downstream consumer and a test.
 

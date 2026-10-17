@@ -9,6 +9,12 @@ this repository and served through GitHub Pages.
 - [e-Portfolio submission (Word, `.docx`)](AOODP_EMA_eportfolio_12701559.docx)
 - [e-Portfolio submission (PDF)](AOODP_EMA_eportfolio_12701559.pdf)
 - [Full narrative — Tasks 1–4, References, Appendices A–C (`eportfolio_tasks_1-4.md`)](eportfolio_tasks_1-4.md)
+- [Narrative body only — Tasks 1–4 with the code excerpts (`submission_body_2500.md`)](submission_body_2500.md)
+
+**Word count:** Tasks 1–4 total 2,133 words (guideline: 2,500 words equivalent effort); the
+reference list, cover sheet, figure, code excerpts and Appendices A–C are excluded, as are
+the listing captions. The document as a whole, excluding the reference list, is 2,494 words.
+The reflection (Task 3 with § 4.3) is within the ~1,000-word guidance.
 
 ---
 
