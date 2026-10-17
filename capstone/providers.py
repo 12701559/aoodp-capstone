@@ -1,0 +1,473 @@
+"""
+Abstract Factory -- interchangeable families of AI service components.
+
+The problem
+-----------
+Supporting more than one scoring provider is not a matter of swapping one
+object.  A provider is a *family*: a client, a configuration, and a way of
+producing a human-readable explanation.  Choosing the local on-premise
+heuristic also chooses an offline client, a null endpoint, and a template
+explainer.  Choosing the hosted language-model provider chooses a networked
+client, a timeout-bearing configuration, a model-generated explainer, and --
+critically -- a mandate to redact before data leaves the process.
+
+Constructing those pieces independently at the call site invites the
+mismatch that matters: a hosted client wired to a configuration whose
+``redact_before_send`` flag is ``False`` would transmit personal data to a
+third party while appearing to be correctly configured.  Nothing about the
+individual classes prevents it.
+
+The pattern
+-----------
+``AiProviderFactory`` declares the family's members and returns them
+together.  A concrete factory creates one *coherent* set, and
+:meth:`AiProviderFactory.assemble` asserts the family's own consistency
+rule before handing anything back, so an unsafe combination cannot be
+assembled rather than merely being discouraged by a comment.
+
+Why this is an abstract *factory* and not three related factories: the
+objects are designed to be used together, and that mutual obligation is the
+whole point.  The pattern converts a documentation problem ("remember to
+set redaction when you pick the hosted client") into a structural one that
+the code enforces.
+
+Testability consequence
+-----------------------
+The hosted backend performs no I/O of its own.  It accepts a ``transport``
+callable, and the concrete factory receives that transport from outside.
+In production the transport wraps an HTTP client; in the test suite it is a
+``MagicMock``.  That single seam is what makes it possible to test the
+entire AI-dependent path -- retries, malformed payloads, outages, the
+fallback route -- with no network, no credentials and no live model.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Any, Callable, Mapping
+
+from .domain import RiskScore
+from .strategies import (
+    ModelBackedScoringStrategy,
+    RiskScoringStrategy,
+    ScoringBackend,
+    WeightedStatisticalStrategy,
+)
+from .validation import (
+    ProviderUnavailableError,
+    ValidationError,
+    validate_amount,
+    validate_choice,
+    validate_text,
+)
+
+
+# ---------------------------------------------------------------------------
+# Family member: configuration
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderConfig:
+    """Configuration that governs one provider family.
+
+    Immutable, so a running engine cannot have its endpoint or redaction
+    policy altered after assembly -- a configuration object that can be
+    mutated at runtime is a privilege-escalation surface as well as a
+    debugging hazard.
+    """
+
+    provider_name: str
+    model_ref: str
+    endpoint: str | None
+    timeout_seconds: float
+    max_retries: int
+    redact_before_send: bool
+    supports_narrative_explanation: bool
+
+    def __post_init__(self) -> None:
+        validate_text(self.provider_name, "provider_name", max_length=64)
+        validate_text(self.model_ref, "model_ref", max_length=128)
+        validate_amount(self.timeout_seconds)
+        if self.timeout_seconds > 120:
+            raise ValidationError("timeout_seconds must not exceed 120")
+        if not isinstance(self.max_retries, int) or isinstance(self.max_retries, bool):
+            raise ValidationError("max_retries must be an integer")
+        if not 0 <= self.max_retries <= 5:
+            raise ValidationError("max_retries must be within [0, 5]")
+        if self.endpoint is not None:
+            validate_text(self.endpoint, "endpoint", max_length=256)
+            if not self.endpoint.startswith("https://"):
+                # Refuse plaintext transport to an off-process provider:
+                # features are derived from personal financial data.
+                raise ValidationError("endpoint must use https")
+        for flag in (self.redact_before_send, self.supports_narrative_explanation):
+            if not isinstance(flag, bool):
+                raise ValidationError("config flags must be booleans")
+
+
+# ---------------------------------------------------------------------------
+# Family member: explanation generator
+# ---------------------------------------------------------------------------
+
+
+class ExplanationGenerator(ABC):
+    """Produces a human-readable account of a decision.
+
+    Kept separate from the scorer because explanation and prediction are
+    different capabilities with different risk profiles: a narrative
+    explanation may be generated by a language model while the score itself
+    is produced deterministically, and the two must be able to be supplied
+    by different systems without either knowing about the other.
+    """
+
+    @abstractmethod
+    def explain(self, features: Mapping[str, float], score: RiskScore) -> str:
+        """Return an explanation for *score*."""
+        raise NotImplementedError
+
+
+class TemplateExplanationGenerator(ExplanationGenerator):
+    """Deterministic, offline explanation built from the top contributions.
+
+    Chosen for the local family because a template is reproducible and
+    auditable: the same input always yields the same sentence, so the
+    explanation can be treated as evidence rather than opinion.
+    """
+
+    def explain(self, features: Mapping[str, float], score: RiskScore) -> str:
+        ranked = sorted(
+            ((k, v) for k, v in score.contributing_features.items() if v > 0),
+            key=lambda item: item[1],
+            reverse=True,
+        )[:3]
+        if not ranked:
+            return (
+                f"Decision {score.decision.value} at score {score.score:.3f}: "
+                "no risk factor exceeded its threshold."
+            )
+        drivers = ", ".join(f"{name} ({value:+.3f})" for name, value in ranked)
+        return (
+            f"Decision {score.decision.value} at score {score.score:.3f}. "
+            f"Principal contributing factors: {drivers}."
+        )
+
+
+class LlmNarrativeExplanationGenerator(ExplanationGenerator):
+    """Explanation produced by the same hosted provider, through the transport port.
+
+    The transport is injected rather than reached for, so this class is
+    tested with a stub that returns a canned sentence -- no live model, no
+    cost, no non-determinism in the test suite.
+    """
+
+    def __init__(
+        self,
+        transport: Callable[[Mapping[str, Any]], Mapping[str, Any]],
+        model_ref: str,
+    ) -> None:
+        if not callable(transport):
+            raise ValidationError("transport must be callable")
+        self._transport = transport
+        self._model_ref = model_ref
+
+    def explain(self, features: Mapping[str, float], score: RiskScore) -> str:
+        request = {
+            "task": "explain_risk_decision",
+            "model_ref": self._model_ref,
+            "decision": score.decision.value,
+            "score": score.score,
+            # Only the contributions are sent, not the raw feature payload:
+            # the narrative does not need the underlying personal data.
+            "contributions": dict(score.contributing_features),
+        }
+        try:
+            response = self._transport(request)
+        except Exception as exc:  # noqa: BLE001 - translation boundary
+            raise ProviderUnavailableError(
+                f"explanation provider failed: {type(exc).__name__}"
+            ) from exc
+        text = response.get("explanation") if isinstance(response, Mapping) else None
+        if not isinstance(text, str) or not text.strip():
+            raise ProviderUnavailableError("explanation provider returned no text")
+        return text.strip()
+
+
+# ---------------------------------------------------------------------------
+# Family members: backends (the concrete AI paths)
+# ---------------------------------------------------------------------------
+
+
+class LocalHeuristicBackend:
+    """An in-process scoring model: no network, no third party, no data egress.
+
+    It satisfies the same :class:`ScoringBackend` port as the hosted
+    backend, which is the Dependency Inversion Principle demonstrated
+    operationally: the scoring strategy cannot tell which implementation it
+    holds, so the engine can be switched between an on-premise and a hosted
+    model -- or between two vendors -- without editing a line of algorithmic
+    code.
+    """
+
+    def __init__(self, engine: WeightedStatisticalStrategy | None = None) -> None:
+        self._engine = engine or WeightedStatisticalStrategy(
+            weights={
+                "amount_zscore": 0.85,
+                "is_foreign": 0.55,
+                "is_elevated_category": 0.70,
+                "is_odd_hour": 0.35,
+                "channel_risk": 0.90,
+                "velocity": 0.25,
+                "log_amount": 0.10,
+            },
+            bias=-2.4,
+        )
+
+    def predict(
+        self, features: Mapping[str, float], model_ref: str
+    ) -> Mapping[str, Any]:
+        """Return a prediction payload in the port's agreed shape."""
+        outcome = self._engine.score(features, model_ref=model_ref)
+        return {
+            "score": outcome.normalised_score,
+            "contributions": dict(outcome.contributions),
+            "explanation": f"on-premise model {model_ref}: {outcome.rationale}",
+        }
+
+
+class HostedLlmBackend:
+    """A networked model provider reached through an injected transport.
+
+    The class owns the *policy* of talking to a remote model -- retrying a
+    transient failure, bounding the attempts, validating the reply -- while
+    owning none of the mechanics of transport.  That split is why the whole
+    remote path is testable offline:
+
+    * the transport is a constructor argument, so tests pass a stub;
+    * a stub that raises simulates an outage;
+    * a stub that returns a malformed payload simulates a misbehaving
+      provider, and the test asserts the engine degrades rather than
+      trusting the reply.
+    """
+
+    def __init__(
+        self,
+        transport: Callable[[Mapping[str, Any]], Mapping[str, Any]],
+        max_retries: int = 2,
+    ) -> None:
+        if not callable(transport):
+            raise ValidationError("transport must be callable")
+        if not 0 <= max_retries <= 5:
+            raise ValidationError("max_retries must be within [0, 5]")
+        self._transport = transport
+        self._max_retries = max_retries
+        self._attempts = 0
+
+    @property
+    def attempts(self) -> int:
+        """Return how many transport calls have been made in total."""
+        return self._attempts
+
+    def predict(
+        self, features: Mapping[str, float], model_ref: str
+    ) -> Mapping[str, Any]:
+        """Request a prediction, retrying transient failures up to the bound."""
+        request = {
+            "task": "score_transaction",
+            "model_ref": model_ref,
+            "features": dict(features),
+        }
+        last_error: Exception | None = None
+        for _ in range(self._max_retries + 1):
+            self._attempts += 1
+            try:
+                response = self._transport(request)
+            except Exception as exc:  # noqa: BLE001 - retry any transport fault
+                last_error = exc
+                continue
+            if isinstance(response, Mapping) and "score" in response:
+                return response
+            last_error = ProviderUnavailableError("provider returned no usable score")
+        raise ProviderUnavailableError(
+            f"provider unavailable after {self._max_retries + 1} attempt(s): "
+            f"{type(last_error).__name__ if last_error else 'unknown'}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# The abstract factory
+# ---------------------------------------------------------------------------
+
+
+class AiProviderFactory(ABC):
+    """Creates a coherent family of AI-provider components."""
+
+    @abstractmethod
+    def create_config(self) -> ProviderConfig:
+        """Create the family's configuration."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def create_backend(self) -> ScoringBackend:
+        """Create the family's scoring backend."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def create_explanation_generator(self) -> ExplanationGenerator:
+        """Create the family's explanation generator."""
+        raise NotImplementedError
+
+    # -- concrete template methods shared by all families -------------
+
+    def create_strategy(self) -> RiskScoringStrategy:
+        """Build the scoring strategy bound to this family's backend."""
+        return ModelBackedScoringStrategy(self.create_backend())
+
+    def assemble(
+        self,
+    ) -> tuple[ProviderConfig, RiskScoringStrategy, ExplanationGenerator]:
+        """Return the complete family after checking it is internally safe."""
+        config = self.create_config()
+        explainer = self.create_explanation_generator()
+        self._assert_family_consistency(config, explainer)
+        return config, self.create_strategy(), explainer
+
+    @staticmethod
+    def _assert_family_consistency(
+        config: ProviderConfig, explainer: ExplanationGenerator
+    ) -> None:
+        """Refuse a family whose members contradict each other.
+
+        Two invariants are enforced here rather than documented, because a
+        documented invariant is one that will eventually be broken:
+
+        1. Any family with an off-process endpoint must redact before
+           sending.  This is the control that stops personal data reaching
+           a third party.
+        2. A family that claims narrative explanation must supply a
+           generator capable of producing it.
+        """
+        if config.endpoint is not None and not config.redact_before_send:
+            raise ValidationError(
+                f"provider {config.provider_name!r} sends data off-process and must "
+                "set redact_before_send=True"
+            )
+        if config.supports_narrative_explanation and explainer is None:
+            raise ValidationError(
+                f"provider {config.provider_name!r} claims narrative explanation but "
+                "supplies no generator"
+            )
+
+
+class LocalHeuristicProviderFactory(AiProviderFactory):
+    """The on-premise family: nothing leaves the process.
+
+    Redaction is deliberately left off here *and that is safe*, because
+    ``endpoint`` is ``None``: there is no off-process destination to protect
+    against.  The consistency check permits this combination precisely
+    because the rule is conditional on egress, not a blanket switch.
+    """
+
+    def __init__(self, model_ref: str = "heuristic-local:1.0.0") -> None:
+        self._model_ref = model_ref
+
+    def create_config(self) -> ProviderConfig:
+        return ProviderConfig(
+            provider_name="local",
+            model_ref=self._model_ref,
+            endpoint=None,
+            timeout_seconds=1.0,
+            max_retries=0,
+            redact_before_send=False,
+            supports_narrative_explanation=True,
+        )
+
+    def create_backend(self) -> ScoringBackend:
+        return LocalHeuristicBackend()
+
+    def create_explanation_generator(self) -> ExplanationGenerator:
+        return TemplateExplanationGenerator()
+
+
+class HostedLlmProviderFactory(AiProviderFactory):
+    """The hosted family: an off-process model reached over an injected transport.
+
+    The transport is a constructor dependency, so this factory can be
+    instantiated in a test with a mock and in production with a wrapper
+    around the organisation's HTTP client.  No import of ``requests``,
+    ``httpx`` or any vendor SDK appears anywhere in this module, which is
+    what allows the AI path to be exercised entirely offline.
+    """
+
+    def __init__(
+        self,
+        transport: Callable[[Mapping[str, Any]], Mapping[str, Any]],
+        endpoint: str = "https://models.example-bank.internal/v1/score",
+        model_ref: str = "hosted-llm:2.1.0",
+        timeout_seconds: float = 2.5,
+        max_retries: int = 2,
+    ) -> None:
+        if not callable(transport):
+            raise ValidationError("transport must be callable")
+        self._transport = transport
+        self._endpoint = endpoint
+        self._model_ref = model_ref
+        self._timeout_seconds = timeout_seconds
+        self._max_retries = max_retries
+
+    def create_config(self) -> ProviderConfig:
+        return ProviderConfig(
+            provider_name="hosted",
+            model_ref=self._model_ref,
+            endpoint=self._endpoint,
+            timeout_seconds=self._timeout_seconds,
+            max_retries=self._max_retries,
+            # Mandatory for this family; enforced by the consistency check.
+            redact_before_send=True,
+            supports_narrative_explanation=True,
+        )
+
+    def create_backend(self) -> ScoringBackend:
+        return HostedLlmBackend(self._transport, max_retries=self._max_retries)
+
+    def create_explanation_generator(self) -> ExplanationGenerator:
+        return LlmNarrativeExplanationGenerator(self._transport, self._model_ref)
+
+
+AVAILABLE_PROVIDERS: frozenset[str] = frozenset({"local", "hosted"})
+
+
+def build_provider_factory(
+    provider: str,
+    transport: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
+    **kwargs: Any,
+) -> AiProviderFactory:
+    """Resolve a concrete factory by name.
+
+    A single resolution point keeps provider selection a configuration
+    concern: the composition root passes a string, the engine never names a
+    concrete class, and adding a third provider is one entry here plus one
+    factory class.
+    """
+    validate_choice(provider, AVAILABLE_PROVIDERS, "provider")
+    if provider == "local":
+        return LocalHeuristicProviderFactory(**kwargs)
+    if transport is None:
+        raise ValidationError("the hosted provider requires a transport callable")
+    return HostedLlmProviderFactory(transport, **kwargs)
+
+
+__all__ = [
+    "AVAILABLE_PROVIDERS",
+    "AiProviderFactory",
+    "ExplanationGenerator",
+    "HostedLlmBackend",
+    "HostedLlmProviderFactory",
+    "LlmNarrativeExplanationGenerator",
+    "LocalHeuristicBackend",
+    "LocalHeuristicProviderFactory",
+    "ProviderConfig",
+    "TemplateExplanationGenerator",
+    "build_provider_factory",
+]

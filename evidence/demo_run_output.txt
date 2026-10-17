@@ -1,0 +1,246 @@
+AI-READY RISK-ASSESSMENT ENGINE -- CAPSTONE DEMONSTRATION
+Offline and deterministic: no API keys, no sockets, no vendor SDKs.
+
+==============================================================================
+1. COMPOSITION ROOT -- the assembled pipeline
+==============================================================================
+provider          : local heuristic (no off-process egress)
+strategy          : rules-v1 (deterministic, fully explainable)
+feature vector    : log_amount, amount_zscore, is_foreign, is_elevated_category, is_odd_hour, channel_risk, velocity
+model_ref         : rules:transaction-risk:2.1.0
+pipeline (outermost first):
+    redacting(metered(audited(cached(rules-v1))))
+
+Default decision policy: score < 0.45 ALLOW, < 0.80 REVIEW, else BLOCK
+
+==============================================================================
+2. BATCH ASSESSMENT -- rules engine over six transactions
+==============================================================================
+txn         amount channel country   score decision strategy
+------------------------------------------------------------
+TX-1001      85.00 pos     GB         0.00 allow   rules-v1
+TX-1002    2600.00 online  GB         0.55 review  rules-v1
+TX-1003    4200.00 wire    NG         1.00 block   rules-v1
+TX-1004     900.00 atm     GB         0.45 review  rules-v1
+TX-1005     150.00 mobile  GB         0.00 allow   rules-v1
+TX-1006     350.00 online  DE         0.65 review  rules-v1
+
+Feature vectors and fired rules (the audit trail of the number):
+
+  TX-1001 -- routine domestic card payment
+    features : log_amount=4.45435 amount_zscore=-0.3 is_foreign=0 is_elevated_category=0 is_odd_hour=0 channel_risk=0.2 velocity=0
+    rationale: no rules fired
+
+  TX-1002 -- large online crypto purchase
+    features : log_amount=7.86365 amount_zscore=50 is_foreign=0 is_elevated_category=1 is_odd_hour=0 channel_risk=0.55 velocity=0
+    rationale: 3 rule(s) fired: amount_zscore>3.0 (+0.30) amount far above the account's own norm; is_elevated_category>0.5 (+0.20) elevated-risk merchant category; log_amount>6.0 (+0.05) large absolute amount
+
+  TX-1003 -- night-time foreign wire in a transaction burst
+    features : log_amount=8.34308 amount_zscore=82 is_foreign=1 is_elevated_category=1 is_odd_hour=1 channel_risk=0.8 velocity=42
+    rationale: 7 rule(s) fired: amount_zscore>3.0 (+0.30) amount far above the account's own norm; is_foreign>0.5 (+0.15) transaction originates abroad; is_elevated_category>0.5 (+0.20) elevated-risk merchant category; is_odd_hour>0.5 (+0.10) unusual hour of day; channel_risk>0.6 (+0.10) higher-risk origination channel; velocity>10.0 (+0.25) unusual transaction velocity on the account; log_amount>6.0 (+0.05) large absolute amount
+
+  TX-1004 -- high-value cash-machine withdrawal
+    features : log_amount=6.80351 amount_zscore=16 is_foreign=0 is_elevated_category=0 is_odd_hour=0 channel_risk=0.65 velocity=0
+    rationale: 3 rule(s) fired: amount_zscore>3.0 (+0.30) amount far above the account's own norm; channel_risk>0.6 (+0.10) higher-risk origination channel; log_amount>6.0 (+0.05) large absolute amount
+
+  TX-1005 -- regular utility bill
+    features : log_amount=5.01728 amount_zscore=1 is_foreign=0 is_elevated_category=0 is_odd_hour=0 channel_risk=0.35 velocity=0
+    rationale: no rules fired
+
+  TX-1006 -- cross-border money transfer
+    features : log_amount=5.86079 amount_zscore=5 is_foreign=1 is_elevated_category=1 is_odd_hour=0 channel_risk=0.55 velocity=0
+    rationale: 3 rule(s) fired: amount_zscore>3.0 (+0.30) amount far above the account's own norm; is_foreign>0.5 (+0.15) transaction originates abroad; is_elevated_category>0.5 (+0.20) elevated-risk merchant category
+
+Decision explanation for the highest-risk element:
+    Decision block at score 1.000. Principal contributing factors: amount_zscore>3.0 (+0.300), velocity>10.0 (+0.250), is_elevated_category>0.5 (+0.200).
+
+==============================================================================
+3. REPORTING VISITORS -- four reports, one unchanged batch
+==============================================================================
+3a. RiskSummaryVisitor (aggregate policy view)
+{
+  "blocked_value": 4200.0,
+  "counts_by_channel": {
+    "atm": 1,
+    "mobile": 1,
+    "online": 2,
+    "pos": 1,
+    "wire": 1
+  },
+  "counts_by_decision": {
+    "allow": 2,
+    "block": 1,
+    "review": 3
+  },
+  "counts_by_strategy": {
+    "rules-v1": 6
+  },
+  "highest_risk": {
+    "decision": "block",
+    "rationale": "7 rule(s) fired: amount_zscore>3.0 (+0.30) amount far above the account's own norm; is_foreign>0.5 (+0.15) transaction originates abroad; is_elevated_category>0.5 (+0.20) elevated-risk merchant category; is_odd_hour>0.5 (+0.10) unusual hour of day; channel_risk>0.6 (+0.10) higher-risk origination channel; velocity>10.0 (+0.25) unusual transaction velocity on the account; log_amount>6.0 (+0.05) large absolute amount",
+    "score": 1.0,
+    "txn_id": "TX-1003"
+  },
+  "mean_score": 0.441667,
+  "report": "RiskSummaryVisitor",
+  "total_transactions": 6
+}
+
+3b. BlockedTransactionVisitor(minimum_score=0.80) -- review queue
+[
+  {
+    "account_suffix": "1234",
+    "amount": 4200.0,
+    "country": "NG",
+    "rationale": "7 rule(s) fired: amount_zscore>3.0 (+0.30) amount far above the account's own norm; is_foreign>0.5 (+0.15) transaction originates abroad; is_elevated_category>0.5 (+0.20) elevated-risk merchant category; is_odd_hour>0.5 (+0.10) unusual hour of day; channel_risk>0.6 (+0.10) higher-risk origination channel; velocity>10.0 (+0.25) unusual transaction velocity on the account; log_amount>6.0 (+0.05) large absolute amount",
+    "score": 1.0,
+    "txn_id": "TX-1003"
+  }
+]
+
+3c. ChannelRiskVisitor -- mean risk per channel
+{
+  "atm": {
+    "mean_score": 0.45,
+    "volume": 1.0
+  },
+  "mobile": {
+    "mean_score": 0.0,
+    "volume": 1.0
+  },
+  "online": {
+    "mean_score": 0.6,
+    "volume": 2.0
+  },
+  "pos": {
+    "mean_score": 0.0,
+    "volume": 1.0
+  },
+  "wire": {
+    "mean_score": 1.0,
+    "volume": 1.0
+  }
+}
+
+3d. JsonExportVisitor -- machine-readable export (account suffix only)
+    export size: 3924 characters, 6 records
+    first record:
+{
+      "account_suffix": "4321",
+      "amount": 85.0,
+      "channel": "pos",
+      "contributions": {},
+      "country": "GB",
+      "decision": "allow",
+      "model_version": "rules:transaction-risk:2.1.0",
+      "rationale": "no rules fired",
+      "score": 0,
+      "strategy": "rules-v1",
+      "timestamp": "2026-03-04T14:30:00+00:00",
+      "txn_id": "TX-1001"
+}
+    records containing a full account number: 0
+
+==============================================================================
+4. AUDIT TRAIL -- one governance record per decision
+==============================================================================
+records written: 6
+fields per record: component, decision, feature_count, model_version, rationale, score
+
+every record (verbatim):
+  {"component": "cached(rules-v1)", "decision": "allow", "feature_count": 7, "model_version": "rules:transaction-risk:2.1.0", "rationale": "no rules fired", "score": 0}
+  {"component": "cached(rules-v1)", "decision": "review", "feature_count": 7, "model_version": "rules:transaction-risk:2.1.0", "rationale": "3 rule(s) fired: amount_zscore>3.0 (+0.30) amount far above the account's own norm; is_elevated_category>0.5 (+0.20) elevated-risk merchant category; log_amount>6.0 (+0.05) large absolute amount", "score": 0.55}
+  {"component": "cached(rules-v1)", "decision": "block", "feature_count": 7, "model_version": "rules:transaction-risk:2.1.0", "rationale": "7 rule(s) fired: amount_zscore>3.0 (+0.30) amount far above the account's own norm; is_foreign>0.5 (+0.15) transaction originates abroad; is_elevated_category>0.5 (+0.20) elevated-risk merchant category; is_odd_hour>0.5 (+0.10) unusual hour of day; channel_risk>0.6 (+0.10) higher-risk origination channel; velocity>10.0 (+0.25) unusual transaction velocity on the account; log_amount>6.0 (+0.05) large absolute amount", "score": 1.0}
+  {"component": "cached(rules-v1)", "decision": "review", "feature_count": 7, "model_version": "rules:transaction-risk:2.1.0", "rationale": "3 rule(s) fired: amount_zscore>3.0 (+0.30) amount far above the account's own norm; channel_risk>0.6 (+0.10) higher-risk origination channel; log_amount>6.0 (+0.05) large absolute amount", "score": 0.45}
+  {"component": "cached(rules-v1)", "decision": "allow", "feature_count": 7, "model_version": "rules:transaction-risk:2.1.0", "rationale": "no rules fired", "score": 0}
+  {"component": "cached(rules-v1)", "decision": "review", "feature_count": 7, "model_version": "rules:transaction-risk:2.1.0", "rationale": "3 rule(s) fired: amount_zscore>3.0 (+0.30) amount far above the account's own norm; is_foreign>0.5 (+0.15) transaction originates abroad; is_elevated_category>0.5 (+0.20) elevated-risk merchant category", "score": 0.65}
+
+account/customer identifiers present in the audit trail: none
+
+==============================================================================
+5. PRIVACY BOUNDARY -- redaction before data leaves the process
+==============================================================================
+redact_mapping() -- keys matching a sensitive marker are masked:
+    log_amount      5.2                                    -> 5.2
+    amount_zscore   2.9                                    -> 2.9
+    velocity        4.0                                    -> 4.0
+    account_number  'GB33BUKB20201555555555'               -> '******************5555'
+    customer_email  'ada.lovelace@example.com'             -> '********************.com'
+    txn_id          'TX-2001'                              -> 'TX-2001'
+
+same boundary observed on the wire: a hosted provider reached
+through a recording transport, fed a payload carrying identifiers.
+    provider config : hosted, endpoint=https://models.example-bank.internal/v1/score
+    redact_before_send=True, max_retries=2
+    decision        : score=0.58 decision=review
+    request that reached the transport:
+{
+      "account_number": "******************5555",
+      "amount_zscore": 2.9,
+      "customer_email": "********************.com",
+      "log_amount": 5.2,
+      "txn_id": "TX-2001",
+      "velocity": 4.0
+}
+    unmasked identifiers observed by the transport: none
+
+==============================================================================
+6. RESILIENCE -- provider outage, retry budget, degradation
+==============================================================================
+6a. Primary provider fails; the caller still receives a decision
+    transport attempts      : 3 (1 initial + 2 retries)
+    on_degrade callbacks    : ['ProviderUnavailableError']
+    degradations recorded   : 1
+    decision returned       : score=1.0 decision=block
+    rationale               : [degraded: primary unavailable] 7 rule(s) fired: amount_zscore>3.0 (+0.30) amount far above the account's own norm; is_foreign>0.5 (+0.15) transaction originates abroad; is_elevated_category>0.5 (+0.20) elevated-risk merchant category; is_odd_hour>0.5 (+0.10) unusual hour of day; channel_risk>0.6 (+0.10) higher-risk origination channel; velocity>10.0 (+0.25) unusual transaction velocity on the account; log_amount>6.0 (+0.05) large absolute amount
+
+6b. Same outage through the real composition root (build_risk_service)
+    model_ref : transaction-risk:2.1.0
+    decision  : score=1.0 decision=block
+    rationale : [degraded: primary unavailable] 7 rule(s) fired: amount_zscore>3.0 (+0.30) amount far above the account's own norm; is_foreign>0.5 (+0.15) transaction originates abroad; is_elevated_category>0.5 (+0.20) elevated-risk merchant category; is_odd_hour>0.5 (+0.10) unusual hour of day; channel_risk>0.6 (+0.10) higher-risk origination channel; velocity>10.0 (+0.25) unusual transaction velocity on the account; log_amount>6.0 (+0.05) large absolute amount
+    degraded  : True
+    total transport attempts across both runs: 6
+
+6c. A misbehaving provider is rejected rather than trusted
+    payload      : {"confidence": 0.99, "verdict": "looks fine"}
+    decision     : score=1.0 decision=block
+    rationale    : [degraded: primary unavailable] 7 rule(s) fired: amount_zscore>3.0 (+0.30) amount far above the account's own norm; is_foreign>0.5 (+0.15) transaction originates abroad; is_elevated_category>0.5 (+0.20) elevated-risk merchant category; is_odd_hour>0.5 (+0.10) unusual hour of day; channel_risk>0.6 (+0.10) higher-risk origination channel; velocity>10.0 (+0.25) unusual transaction velocity on the account; log_amount>6.0 (+0.05) large absolute amount
+
+==============================================================================
+7. MODEL REGISTRY -- lifecycle, promotion, versioned attribution
+==============================================================================
+live production model at start-up: transaction-risk:2.1.0
+
+registered transaction-risk:2.2.0 in stage development
+promoted to staging
+promoted to production
+
+version history:
+    transaction-risk:2.1.0     archived    roc_auc=0.940 registered_by=capstone-demo
+    transaction-risk:2.2.0     production  roc_auc=0.961 registered_by=risk-science
+
+production_model_ref() now returns: transaction-risk:2.2.0
+    -> the swap was a registry operation, not a code change.
+    promoting archived 2.1.0 -> production: refused
+        illegal transition archived -> production for model 'transaction-risk' version '2.1.0'
+
+a decision taken after promotion records the new version:
+    model_version on the decision: transaction-risk:2.2.0
+    model_ref on the service     : transaction-risk:2.2.0
+
+==============================================================================
+8. INVERSION OF CONTROL -- container-managed dependencies
+==============================================================================
+registered services: context_provider, risk_service
+singleton risk_service reused: True
+resolved pipeline: redacting(metered(audited(rules-v1)))
+resolved model_ref: rules:transaction-risk:2.1.0
+unregistered dependency requested -> ValidationError
+    service 'fraud_model_endpoint' is not registered; known: ['context_provider', 'risk_service']
+
+==============================================================================
+DEMONSTRATION COMPLETE
+==============================================================================
+Every section above ran against the same shipped package that the
+test suite exercises; no network access and no model credentials
+were required, and no external service was contacted.

@@ -1,0 +1,19 @@
+Name                                   Stmts   Miss  Cover
+----------------------------------------------------------
+capstone/decorators.py                   185      5    97%
+capstone/model_registry.py               102      2    98%
+capstone/providers.py                    148      4    97%
+capstone/reporting.py                     84      1    99%
+capstone/strategies.py                   147      1    99%
+capstone/tests/conftest.py               105      5    95%
+capstone/tests/test_domain.py             96      1    99%
+capstone/tests/test_feature_store.py      85      1    99%
+capstone/tests/test_providers.py         238      2    99%
+capstone/validation.py                    93      1    99%
+unit6/bank_account.py                     79      2    97%
+unit6/test_banking_system.py             294     14    95%
+unit6/transaction_simulator.py            87     24    72%
+----------------------------------------------------------
+TOTAL                                   2972     63    98%
+
+11 files skipped due to complete coverage.
