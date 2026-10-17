@@ -102,3 +102,11 @@ Each substantive claim in Tasks 1–4 is traceable:
 | Singleton reused across resolutions | `demo_run_output.txt` §8 |
 | Weights and thresholds as tabulated | `capstone/strategies.py` (read) |
 | No live model or network used | demo closing note; test doubles in `conftest.py` |
+
+## Supporting record referenced by Appendix B
+
+| Appendix B row | Record | Location |
+|---|---|---|
+| Repository contribution history | `git log --date=short` and `git shortlog -sne` export | `docs/git_contribution_history.txt` |
+
+The remaining Appendix B rows (task ownership, meeting records, peer review, tutor feedback, study log) are marked "Not part of this submission". The submission is individual work, so no group record is asserted.
