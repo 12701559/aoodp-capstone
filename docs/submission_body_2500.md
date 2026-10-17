@@ -1,3 +1,7 @@
+# e-Portfolio Introduction
+
+This e-Portfolio presents the AOODP capstone: a transaction risk-assessment engine of nine modules, 355 offline tests and 99% statement coverage. Task 1 maps six learning outcomes to code, Task 2 showcases twelve artefacts, Task 3 reflects on academic and employability skills, and Task 4 sets a development plan. Every claim is tied to a file or captured run, and each section states what the design gave up as well as what it bought.
+
 # Task 1 – Summarise Key Learning Outcomes
 
 The capstone is a transaction risk-assessment engine: transactions in, governance-instrumented decisions out. Appendix A maps each claim to its file.
@@ -8,7 +12,7 @@ Security is structural, not appended. `Transaction` is a frozen slotted dataclas
 
 ## 1.2 Apply advanced object-oriented principles to complex problems
 
-Five concerns — features, algorithm, policy, lifecycle, format — are joined only by the composition root in `service.py`. Encapsulation uses frozen value objects, polymorphism `RiskScoringStrategy` and `ReportVisitor`, abstraction a five-line `ScoringBackend` protocol, and constructor injection: algorithm, provider, model version and format change without editing a consumer.
+Five concerns — features, algorithm, policy, lifecycle, format — are joined only by the composition root in `service.py`. Encapsulation uses frozen value objects, polymorphism `RiskScoringStrategy` and `ReportVisitor`, abstraction a five-line `ScoringBackend` protocol, and constructor injection: algorithm, provider, model version and format change without editing a consumer. Separation of concerns is the organising principle — one module owns each axis — and that is what makes the design scalable and extensible: a new algorithm, provider or report is added at one seam while the rest stay untouched.
 
 ## 1.3 Utilise design patterns for reusable, maintainable, flexible code
 
@@ -20,11 +24,11 @@ Five concerns — features, algorithm, policy, lifecycle, format — are joined 
 | Abstract Factory | `providers.py` | A provider family swapped together |
 | Dependency Injection | `service.py` | Injected dependencies make tests deterministic |
 
-Each was chosen against a named rejected alternative.
+Each pattern was chosen against a named rejected alternative, and the trade-off — not the pattern's reputation — is the justification. The payoff: runtime behavioural flexibility — scoring mode, provider family and report format are configuration at the composition root, so behaviour changes without editing a consumer.
 
 ## 1.4 Design architectures suitable for large-scale systems, ensuring security and robustness
 
-Caching is an inner decorator, so it can become distributed without touching governance; the registry centralises lifecycle state. Robustness is demonstrated: a provider outage still produces a decision that reaches the audit trail, and a promotion that breaks the lifecycle rules is refused.
+Caching is an inner decorator, so it can become distributed without touching governance; the registry centralises lifecycle state. Robustness is demonstrated: a provider outage produces a decision that reaches the audit trail, and a promotion that breaks a lifecycle rule is refused.
 
 ## 1.5 Develop software adaptable for AI models and efficient for data science tasks
 
@@ -44,7 +48,7 @@ Repository: `https://github.com/stacyalwangaessex/aoodp-capstone` (GitHub Pages)
 
 ## 2.2 Artefact B — Strategy pattern
 
-`RiskScoringStrategy` defines `score(features, model_ref)`, implemented rule-based, statistical and model-backed through `ScoringBackend`; `contributions` records which inputs drove the number.
+`RiskScoringStrategy` defines `score(features, model_ref)`, implemented rule-based, statistical and model-backed through `ScoringBackend`; `contributions` records which inputs drove the number. Strategy was chosen over an `if`/`elif` mode flag because the algorithms differ in the inputs they need and the rationale they give, not only in output, so polymorphism keeps each decision path with its explanation.
 
 @caption Listing 1 — the port the whole AI path depends on (`capstone/strategies.py`, abridged)
 
@@ -60,7 +64,7 @@ class ScoringBackend(Protocol):
 
 ## 2.3 Artefact C — Decorator pattern
 
-Five layers — redaction, metrics, audit, caching, fallback — are composed by `compose_scoring_pipeline()`, the single assembly point. **Defect fixed:** assembly placed `AuditingDecorator` inside `FallbackDecorator`; every per-decorator test passed, and only a test that a degraded decision reaches the audit sink exposed it.
+Five layers — redaction, metrics, audit, caching, fallback — are composed by `compose_scoring_pipeline()`, the single assembly point. **Defect fixed:** assembly placed `AuditingDecorator` inside `FallbackDecorator`; every per-decorator test passed, and only a test that a degraded decision reaches the audit sink exposed it — the challenge this pattern sets: each layer is individually correct, yet correctness lives in an ordering the type system cannot check.
 
 @caption Listing 2 — the ordering decision made explicit (`capstone/decorators.py`, abridged; indentation normalised)
 
@@ -96,11 +100,11 @@ return core
 
 ## 2.7 Artefact H — Dependency Injection
 
-`RiskAssessmentService` takes every collaborator by constructor, and `build_risk_service()` is the composition root. `ServiceContainer` stays a minimal 45-line factory rather than a framework container; a service locator is kept at the outer edge because it hides dependencies from the type checker (Fowler, 2004).
+`RiskAssessmentService` takes every collaborator by constructor, and `build_risk_service()` is the composition root. `ServiceContainer` stays a minimal 45-line factory rather than a framework container; a service locator is kept at the outer edge because it hides dependencies from the type checker (Fowler, 2004). That is where abstraction was stopped against over-engineering: a general container would be more capable and less legible, so the smaller factory won on what a reader can verify.
 
 ## 2.8 Artefact I — Testing and AI-assisted tests
 
-`capstone/tests/` holds nine modules and 355 offline tests at 99% coverage of 2,512 statements, with doubles named by category (Python Software Foundation, 2026). An AI assistant drafted tests from class contracts, finding a boundary case I had missed — a boolean score, an `int` in Python, that passes `isinstance` — but also produced confidently wrong assertions, detectable only by running them.
+`capstone/tests/` holds nine modules and 355 offline tests at 99% coverage of 2,512 statements, with doubles named by category — stub, spy and mock — so a reader can see which contract each isolates and every layer stays testable without a live model (Python Software Foundation, 2026). Testing complexity here is path, not line, coverage: composition order, retry budgets and lifecycle transitions multiply, which is why doubles, not live models, carry the AI paths. An AI assistant drafted tests from class contracts, finding a boundary case I had missed — a boolean score, an `int` in Python, that passes `isinstance` — but also produced confidently wrong assertions, detectable only by running them. Both capstone defects now carry regression tests that read state back through a second access path.
 
 @caption Listing 3 — a spy double that makes one call reviewable (`capstone/tests/conftest.py`, abridged)
 
@@ -122,7 +126,7 @@ class CallRecorder:
 
 ## 2.9 Capstone — architecture and robustness
 
-Figure 1 shows the composition root, the defended decorator order, the strategy/backend seam, adapters and visitor. `evidence/demo_run_output.txt` captures eight sections: a six-transaction batch (two `allow`, three `review`, one `block`); audit records with no identifier; masking before egress (`GB33…5555` → `****…5555`); and a provider outage with a three-attempt retry budget.
+Figure 1 shows the composition root, the defended decorator order, the strategy/backend seam, adapters and visitor. `evidence/demo_run_output.txt` captures eight sections: a six-transaction batch (two `allow`, three `review`, one `block`); audit records with no identifier; masking before egress (`GB33…5555` → `****…5555`); and a provider outage with a three-attempt retry budget. Critically, the capture bounds the claim: rule weights are expert-set and unvalidated and the cache is in-process, so the robustness shown is single-node.
 
 ![Figure 1 — Capstone architecture](figure_1_architecture.png)
 
@@ -136,17 +140,19 @@ An e-Portfolio is a curated, purposeful collection of evidence rather than a chr
 
 **Ethical considerations in AI-driven OO design.** *Bias propagation:* policy lives in data rather than a class hierarchy, so rule weights and thresholds are inspectable, versionable values a reviewer can read directly. The residual risk is real: those weights are expert-set, not learned, so they encode the blind spots of their authors — the engine makes bias inspectable, not absent (Barocas, Hardt and Narayanan, 2023). *Transparency:* `rationale` and `contributions` are contract fields, so an algorithm that cannot say which inputs drove its number cannot conform. *Black-box coupling:* `ScoringBackend` is five lines with no vendor concepts. *Auditability:* every decision produces a structured record — component, model version, score, decision, rationale — asserted by the run to contain no account or customer identifier.
 
-**Problem-solving and refactoring.** Refactoring was driven by measurable signals, not taste: extracting `validation.py` removed duplication across five modules, and extracting `compose_scoring_pipeline()` collapsed four copies of an ordering decision into one documented function. I also resisted over-refactoring: a shared base class for the reporting visitors would create inheritance without polymorphism.
+**Problem-solving and refactoring.** Refactoring was driven by measurable signals, not taste: extracting `validation.py` removed duplication across five modules, and extracting `compose_scoring_pipeline()` collapsed four copies of an ordering decision into one documented function. I also had to manage abstraction against over-engineering: a shared base class for the reporting visitors would create inheritance without polymorphism, so the duplication stayed.
 
 **Research and self-study.** Reading fell into three groups: pattern sources (Gamma *et al.*, 1994; Martin, 2000, 2017; Fowler, 2004, 2018) for vocabulary and trade-offs; AI-systems sources (Sculley *et al.*, 2015) for the feature-store and registry arguments; and risk and fairness sources (Aven and Thekdi, 2025; Barocas, Hardt and Narayanan, 2023). The useful outcome was negative: none of the pattern literature treats governance layers — audit, redaction, degradation — as first-class composition concerns, so the pipeline-order reasoning here came from analysing my own failure modes.
 
 ## 3.2 Employability skills
 
-**Time management.** I worked in artefact-sized increments, capturing evidence alongside construction rather than reconstructing it at the end. My concrete failure was underestimating test-writing: closing coverage from 87% to 99% took three modules and 143 tests and produced the two most valuable findings in the portfolio, which argues for budgeting test time as design time. The same lesson held for this portfolio: the narrative was rewritten three times as the evidence arrived, which cost more effort than capturing it correctly while the work was fresh.
+**Time management.** I worked in artefact-sized increments, capturing evidence alongside construction rather than reconstructing it at the end. My concrete failure was underestimating test-writing: closing coverage from 87% to 99% took three modules and 143 tests and produced the two most valuable findings in the portfolio, which argues for budgeting test time as design time. The same lesson held for this portfolio: the narrative was rewritten three times as the evidence arrived, which cost more than capturing it while the work was fresh.
 
 **Communication and literacy.** The clearest gain was writing docstrings that carry a decision rather than a description: `compose_scoring_pipeline` states the order and justifies each position. Writing the degradation marker as a machine-readable prefix (`[degraded: primary unavailable]`) was also a communication decision, since the same form is legible to an operator, a downstream consumer and a test.
 
-**Resilience and interpersonal skills.** Resilience meant sitting with a failing test I believed was correct for longer than was comfortable, and changing the design instead of the assertion. On collaboration I must be explicit about the limits of my evidence: this is individual work, and Appendix B records what evidence of independent working is held. The transferable lesson survives that limitation: writing the decorator ordering decision down as a reviewer would demand forced me to state an intuition I had only relied on.
+**Resilience and interpersonal skills.** Resilience meant sitting with a failing test I believed was correct for longer than was comfortable, and changing the design instead of the assertion.
+
+**Collaboration and independent working.** This is individual work with a single-author history and no peer review; Appendix B records that as a gap rather than substituting retrospective minutes. Collaboration was instead adversarial and tool-mediated: an AI assistant drafted tests against my contracts and, where its assertions were confidently wrong, I overruled it. That draft is not peer review, but it exercised the discipline peer review demands: writing each decision so another party can audit it. Stating the decorator-ordering decision that way forced me to justify an intuition I had only relied on.
 
 # Task 4 – Professional Development Plan
 
