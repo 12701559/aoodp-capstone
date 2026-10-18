@@ -7,7 +7,6 @@ this repository and served through GitHub Pages.
 **Submission documents**
 
 - [e-Portfolio submission (Word, `.docx`)](AOODP_EMA_eportfolio_12701559.docx)
-- [e-Portfolio submission (PDF)](AOODP_EMA_eportfolio_12701559.pdf)
 - [Full narrative — Tasks 1–4, References, Appendices A–C (`eportfolio_tasks_1-4.md`)](eportfolio_tasks_1-4.md)
 - [Narrative body only — Tasks 1–4 with the code excerpts (`submission_body_2500.md`)](submission_body_2500.md)
 
