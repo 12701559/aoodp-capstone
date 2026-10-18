@@ -59,7 +59,7 @@ Secure coding appears in `validation.py`; the four patterns in one engine (Task 
 
 ## Task 2 – Showcase Artefacts
 
-Repository: `https://github.com/stacyalwangaessex/aoodp-capstone` (GitHub Pages); code cited as evidence.
+Repository: `https://github.com/12701559/aoodp-capstone` (GitHub Pages); code cited as evidence.
 
 ### 2.1 Artefact A — Thread-safe concurrency (Unit 6)
 
