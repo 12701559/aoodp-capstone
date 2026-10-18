@@ -93,7 +93,7 @@ submission records that as a gap rather than substituting retrospective notes.
 
 ## 6. Evidence of independent working
 
-- [`git_contribution_history.txt`](git_contribution_history.txt) — repository history export backing Appendix B
+- [Repository commit history](https://github.com/12701559/aoodp-capstone/commits/main) — GitHub commit log backing Appendix B
 - [`eportfolio_tasks_1-4.md` § Appendix B](eportfolio_tasks_1-4.md) — evidence held in support of independent working
 - [`eportfolio_tasks_1-4.md` § Appendix C](eportfolio_tasks_1-4.md) — honest statement of limits
 

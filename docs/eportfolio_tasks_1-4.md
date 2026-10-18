@@ -279,7 +279,7 @@ Sculley, D. *et al.* (2015) 'Hidden technical debt in machine learning systems',
 
 | Evidence type | Record that would evidence it | Held |
 |---|---|---|
-| Repository contribution history | `git log`, `git shortlog -sne` | Held — summarised in `docs/git_contribution_history.txt` |
+| Repository contribution history | `git log`, `git shortlog -sne` | Held — repository commit history |
 | Task ownership | Trello/Jira/GitHub Projects board | Not held |
 | Meeting records | Dated minutes or notes | Not held |
 | Peer review | Comments on another's artefact | Not held |
@@ -291,3 +291,4 @@ Sculley, D. *et al.* (2015) 'Hidden technical debt in machine learning systems',
 1. **Rule weights are expert judgement, not evidence.** They are versioned and inspectable, but inspectable is not validated, and the fairness risk in Task 3 lives here.
 2. **The model-backed path runs against test doubles, never a real model.** That validates the integration contract, not that a real model answers correctly; the hosted transport is the seam where that changes.
 3. **The registry and feature store are in-memory.** Lifecycle and versioning semantics are demonstrated, but durability, migration and multi-process consistency are out of scope — hence Goal 1's persisted registry.
+4. **Figure 1 was produced with AI assistance.** A short written outline of the module names, call order and seams was provided to an AI assistant, which turned it into a small plotting script; the script was then run locally to draw the diagram. No source code, transaction data or repository content was submitted to any external AI service, and the architecture and every annotation in the figure are the author's own design.
