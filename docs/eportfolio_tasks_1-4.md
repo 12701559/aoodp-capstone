@@ -12,8 +12,8 @@
 > counted. In this markdown copy the listing captions are running text rather than captions,
 > so a raw word count of the file reads 2,538 — the submitted .docx count is the 2,497
 > figure, which the cover sheet states.
-> Repository links: <https://github.com/stacyalwangaessex/aoodp-capstone> and the module page
-> at <https://stacyalwangaessex.github.io/aoodp-capstone/>.
+> Repository links: <https://github.com/12701559/aoodp-capstone> and the module page
+> at <https://12701559.github.io/aoodp-capstone/>.
 
 ---
 
