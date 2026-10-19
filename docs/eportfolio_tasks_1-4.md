@@ -1,7 +1,7 @@
 # e-Portfolio — Advanced Object-Oriented Design and Programming (AOODP)
 
 **Student:** 12701559 · **Module:** Advanced Object-Oriented Design and Programming (AOODP)
-**Artefact repository:** `capstone/` — nine modules, 2,512 statements, 355 offline tests, 99% statement coverage
+**Artefact repository:** `capstone/` — nine modules, 355 offline tests, 99% statement coverage
 **Companion artefact (Unit 6):** `unit6/` — thread-safe banking system, 39 tests
 **Evidence:** `evidence/demo_run_output.txt`, `evidence/test_run_output.txt`, `evidence/coverage_report.txt`, `evidence/coverage_html/`
 
